@@ -94,11 +94,11 @@ require (
 	gocloud.dev/pubsub/rabbitpubsub v0.44.0
 	golang.org/x/crypto v0.48.0
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa
-	golang.org/x/image v0.36.0
+	golang.org/x/image v0.37.0
 	golang.org/x/net v0.50.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.42.0
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.267.0
@@ -159,7 +159,7 @@ require (
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.125.3
 	go.etcd.io/etcd/client/pkg/v3 v3.6.7
 	go.uber.org/atomic v1.11.0
-	golang.org/x/sync v0.19.0
+	golang.org/x/sync v0.20.0
 	golang.org/x/tools/godoc v0.1.0-deprecated
 	google.golang.org/grpc/security/advancedtls v1.0.0
 )

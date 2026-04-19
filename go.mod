@@ -136,7 +136,7 @@ require (
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
-	github.com/hashicorp/vault/api v1.22.0
+	github.com/hashicorp/vault/api v1.23.0
 	github.com/jhump/protoreflect v1.18.0
 	github.com/linkedin/goavro/v2 v2.15.0
 	github.com/mattn/go-sqlite3 v1.14.34

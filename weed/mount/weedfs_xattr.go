@@ -3,9 +3,14 @@
 package mount
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	sys "golang.org/x/sys/unix"
@@ -16,7 +21,20 @@ const (
 	MAX_XATTR_NAME_SIZE  = 255
 	MAX_XATTR_VALUE_SIZE = 65536
 	XATTR_PREFIX         = "xattr-" // same as filer
+	TAG_XATTR_NAME       = "user.tags"
+	TAG_VERSION_XATTR    = "user.tag_version"
+	SEAWEED_TAGS_KEY     = "Seaweed-Tags"
+	SEAWEED_TAG_VER_KEY  = "Seaweed-Tag-Version"
 )
+
+type tagEvent struct {
+	Ts           int64    `json:"ts"`
+	Source       string   `json:"source,omitempty"`
+	Op           string   `json:"op"`
+	Path         string   `json:"path"`
+	Tags         []string `json:"tags,omitempty"`
+	IndexUpdated bool     `json:"index_updated"`
+}
 
 // GetXAttr reads an extended attribute, and should return the
 // number of bytes. If the buffer is too small, return ERANGE,
@@ -49,7 +67,7 @@ func (wfs *WFS) GetXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr str
 	if entry.Extended == nil {
 		return 0, fuse.ENOATTR
 	}
-	data, found := entry.Extended[XATTR_PREFIX+attr]
+	data, found := entry.Extended[xattrStorageKey(attr)]
 	if !found {
 		return 0, fuse.ENOATTR
 	}
@@ -121,7 +139,9 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 	if entry.Extended == nil {
 		entry.Extended = make(map[string][]byte)
 	}
-	oldData, _ := entry.Extended[XATTR_PREFIX+attr]
+	storageKey := xattrStorageKey(attr)
+	oldData, _ := entry.Extended[storageKey]
+	updated := false
 	switch input.Flags {
 	case sys.XATTR_CREATE:
 		if len(oldData) > 0 {
@@ -131,15 +151,23 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 	case sys.XATTR_REPLACE:
 		fallthrough
 	default:
-		entry.Extended[XATTR_PREFIX+attr] = data
+		entry.Extended[storageKey] = data
+		updated = true
 	}
 
 	if fh != nil {
 		fh.dirtyMetadata = true
+		if updated {
+			wfs.appendTagEventIfNeeded(path, attr, data, false)
+		}
 		return fuse.OK
 	}
 
-	return wfs.saveEntry(path, entry)
+	status = wfs.saveEntry(path, entry)
+	if status == fuse.OK && updated {
+		wfs.appendTagEventIfNeeded(path, attr, data, false)
+	}
+	return status
 
 }
 
@@ -169,6 +197,14 @@ func (wfs *WFS) ListXAttr(cancel <-chan struct{}, header *fuse.InHeader, dest []
 			data = append(data, k[len(XATTR_PREFIX):]...)
 			data = append(data, 0)
 		}
+	}
+	if _, found := entry.Extended[SEAWEED_TAGS_KEY]; found {
+		data = append(data, TAG_XATTR_NAME...)
+		data = append(data, 0)
+	}
+	if _, found := entry.Extended[SEAWEED_TAG_VER_KEY]; found {
+		data = append(data, TAG_VERSION_XATTR...)
+		data = append(data, 0)
 	}
 	if len(dest) < len(data) {
 		return uint32(len(data)), fuse.ERANGE
@@ -204,13 +240,117 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 	if entry.Extended == nil {
 		return fuse.ENOATTR
 	}
-	_, found := entry.Extended[XATTR_PREFIX+attr]
+	storageKey := xattrStorageKey(attr)
+	_, found := entry.Extended[storageKey]
 
 	if !found {
 		return fuse.ENOATTR
 	}
 
-	delete(entry.Extended, XATTR_PREFIX+attr)
+	delete(entry.Extended, storageKey)
 
-	return wfs.saveEntry(path, entry)
+	status = wfs.saveEntry(path, entry)
+	if status == fuse.OK {
+		wfs.appendTagEventIfNeeded(path, attr, nil, true)
+	}
+	return status
+}
+
+func xattrStorageKey(attr string) string {
+	switch attr {
+	case TAG_XATTR_NAME:
+		return SEAWEED_TAGS_KEY
+	case TAG_VERSION_XATTR:
+		return SEAWEED_TAG_VER_KEY
+	default:
+		return XATTR_PREFIX + attr
+	}
+}
+
+func (wfs *WFS) appendTagEventIfNeeded(path interface{}, attr string, data []byte, deleted bool) {
+	if attr != TAG_XATTR_NAME || wfs.option.TagEventLog == "" {
+		return
+	}
+	op := "set"
+	var tags []string
+	if deleted {
+		op = "delete_all"
+	} else {
+		tags = splitTagEventValue(string(data))
+	}
+	event := tagEvent{
+		Ts:           time.Now().UnixNano(),
+		Source:       "fuse_xattr",
+		Op:           op,
+		Path:         stringPath(path),
+		Tags:         tags,
+		IndexUpdated: false,
+	}
+	if err := appendTagEvent(wfs.option.TagEventLog, event); err != nil {
+		// xattr has already been applied. Keep the filesystem operation successful,
+		// but surface the tracking failure in logs so freshness can be diagnosed.
+		println("failed to append tag event:", err.Error())
+	}
+}
+
+func appendTagEvent(logPath string, event tagEvent) error {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return err
+	}
+	unlock, err := lockTagEventLog(logPath)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := json.NewEncoder(file).Encode(event); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+func lockTagEventLog(logPath string) (func(), error) {
+	lockPath := logPath + ".lock"
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	}, nil
+}
+
+func splitTagEventValue(s string) []string {
+	fields := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ' '
+	})
+	tags := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field != "" {
+			tags = append(tags, field)
+		}
+	}
+	return tags
+}
+
+func stringPath(path interface{}) string {
+	switch p := path.(type) {
+	case string:
+		return p
+	case []byte:
+		return string(p)
+	default:
+		return fmt.Sprint(p)
+	}
 }

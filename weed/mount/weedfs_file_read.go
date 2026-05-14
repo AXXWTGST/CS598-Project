@@ -65,6 +65,7 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 		glog.Warningf("file handle read %s %d: %v", fh.FullPath(), totalRead, err)
 		return nil, fuse.EIO
 	}
+	wfs.recordHotnessRead(fh.FullPath(), totalRead)
 
 	if IsDebugFileReadWrite {
 		// print(".")

@@ -339,6 +339,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Cipher:               cipher,
 		UidGidMapper:         uidGidMapper,
 		DisableXAttr:         *option.disableXAttr,
+		TagEventLog:          *option.tagEventLog,
+		RuleJson:             *option.ruleJson,
+		HotnessDir:           *option.hotnessDir,
+		HotnessCapacity:      *option.hotnessCapacity,
+		HotnessSlotSize:      *option.hotnessSlotSize,
 		IsMacOs:              runtime.GOOS == "darwin",
 		MetadataFlushSeconds: *option.metadataFlushSeconds,
 		// RDMA acceleration options

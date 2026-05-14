@@ -67,6 +67,7 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 	if status == fuse.OK {
 		out.Fh = uint64(fileHandle.fh)
 		out.OpenFlags = in.Flags
+		wfs.recordHotnessOpen(fileHandle.FullPath())
 		if wfs.option.IsMacOs {
 			// remove the direct_io flag, as it is not well-supported on macOS
 			// https://code.google.com/archive/p/macfuse/wikis/OPTIONS.wiki recommended to avoid the direct_io flag

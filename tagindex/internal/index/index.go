@@ -335,24 +335,34 @@ func writeLines(path string, lines map[string]struct{}) error {
 	}
 	sort.Strings(sorted)
 
-	tmp := path + ".tmp"
-	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	tmpFile, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return err
 	}
-	writer := bufio.NewWriter(file)
+	tmp := tmpFile.Name()
+	removeTmp := true
+	defer func() {
+		if removeTmp {
+			_ = os.Remove(tmp)
+		}
+	}()
+	writer := bufio.NewWriter(tmpFile)
 	for _, line := range sorted {
 		if _, err := fmt.Fprintln(writer, line); err != nil {
-			file.Close()
+			tmpFile.Close()
 			return err
 		}
 	}
 	if err := writer.Flush(); err != nil {
-		file.Close()
+		tmpFile.Close()
 		return err
 	}
-	if err := file.Close(); err != nil {
+	if err := tmpFile.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	removeTmp = false
+	return nil
 }

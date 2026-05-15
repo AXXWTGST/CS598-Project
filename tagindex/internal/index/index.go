@@ -13,31 +13,81 @@ type Store struct {
 	Root string
 }
 
+const allTaggedFile = "all-tagged"
+
 func New(root string) *Store {
 	return &Store{Root: root}
 }
 
 func (s *Store) Set(path string, tags []string) error {
-	if path == "" {
-		return fmt.Errorf("path is required")
-	}
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
+	path, err := normalizePath(path)
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Join(s.Root, "by-tag"), 0o755); err != nil {
 		return err
 	}
 
+	tags = normalizeTags(tags)
+
 	if err := s.removePathFromAllTags(path); err != nil {
 		return err
 	}
+	if len(tags) == 0 {
+		if err := s.removeTaggedPath(path); err != nil {
+			return err
+		}
+	} else if err := s.addTaggedPath(path); err != nil {
+		return err
+	}
 
-	for _, tag := range normalizeTags(tags) {
+	for _, tag := range tags {
 		if err := s.addPath(tag, path); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *Store) Update(path string, oldTags, newTags []string) error {
+	path, err := normalizePath(path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(s.Root, "by-tag"), 0o755); err != nil {
+		return err
+	}
+
+	oldTags = normalizeTags(oldTags)
+	newTags = normalizeTags(newTags)
+	oldSet := tagSet(oldTags)
+	newSet := tagSet(newTags)
+
+	for _, tag := range oldTags {
+		if _, keep := newSet[tag]; keep {
+			continue
+		}
+		if err := s.removePath(tag, path); err != nil {
+			return err
+		}
+	}
+	for _, tag := range newTags {
+		if _, exists := oldSet[tag]; exists {
+			continue
+		}
+		if err := s.addPath(tag, path); err != nil {
+			return err
+		}
+	}
+
+	switch {
+	case len(oldTags) == 0 && len(newTags) > 0:
+		return s.addTaggedPath(path)
+	case len(oldTags) > 0 && len(newTags) == 0:
+		return s.removeTaggedPath(path)
+	default:
+		return nil
+	}
 }
 
 func (s *Store) Query(tag, under string) ([]string, error) {
@@ -69,6 +119,14 @@ func (s *Store) QueryExpr(expr []string, under string) ([]string, error) {
 	}
 
 	return filterAndSort(paths, under), nil
+}
+
+func (s *Store) RebuildAllTagged() error {
+	paths, err := s.allPaths()
+	if err != nil {
+		return err
+	}
+	return writeLines(s.allTaggedPath(), paths)
 }
 
 func (s *Store) pathsForTag(tag string) (map[string]struct{}, error) {
@@ -140,6 +198,14 @@ func (p *exprParser) parseAnd() (map[string]struct{}, error) {
 		return nil, err
 	}
 	for p.match("and") {
+		if p.match("not") {
+			right, err := p.parseUnary()
+			if err != nil {
+				return nil, err
+			}
+			left = difference(left, right)
+			continue
+		}
 		right, err := p.parseUnary()
 		if err != nil {
 			return nil, err
@@ -155,11 +221,11 @@ func (p *exprParser) parseUnary() (map[string]struct{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		allPaths, err := p.store.allPaths()
+		allTagged, err := p.store.allTaggedPaths()
 		if err != nil {
 			return nil, err
 		}
-		return difference(allPaths, paths), nil
+		return difference(allTagged, paths), nil
 	}
 
 	if !p.hasNext() {
@@ -244,6 +310,60 @@ func (s *Store) addPath(tag, path string) error {
 	return writeLines(indexPath, paths)
 }
 
+func (s *Store) removePath(tag, path string) error {
+	indexPath := filepath.Join(s.Root, "by-tag", tag)
+	paths, err := readLines(indexPath)
+	if err != nil {
+		return err
+	}
+	if _, ok := paths[path]; !ok {
+		return nil
+	}
+	delete(paths, path)
+	return writeLines(indexPath, paths)
+}
+
+func (s *Store) addTaggedPath(path string) error {
+	paths, err := s.allTaggedPaths()
+	if err != nil {
+		return err
+	}
+	paths[path] = struct{}{}
+	return writeLines(s.allTaggedPath(), paths)
+}
+
+func (s *Store) removeTaggedPath(path string) error {
+	paths, err := s.allTaggedPaths()
+	if err != nil {
+		return err
+	}
+	if _, ok := paths[path]; !ok {
+		return nil
+	}
+	delete(paths, path)
+	return writeLines(s.allTaggedPath(), paths)
+}
+
+func (s *Store) allTaggedPaths() (map[string]struct{}, error) {
+	if _, err := os.Stat(s.allTaggedPath()); os.IsNotExist(err) {
+		paths, err := s.allPaths()
+		if err != nil {
+			return nil, err
+		}
+		if err := writeLines(s.allTaggedPath(), paths); err != nil {
+			return nil, err
+		}
+		return paths, nil
+	} else if err != nil {
+		return nil, err
+	}
+	return readLines(s.allTaggedPath())
+}
+
+func (s *Store) allTaggedPath() string {
+	return filepath.Join(s.Root, allTaggedFile)
+}
+
 func (s *Store) removePathFromAllTags(path string) error {
 	byTagDir := filepath.Join(s.Root, "by-tag")
 	entries, err := os.ReadDir(byTagDir)
@@ -290,6 +410,24 @@ func normalizeTags(tags []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func tagSet(tags []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		set[tag] = struct{}{}
+	}
+	return set
+}
+
+func normalizePath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return path, nil
 }
 
 func normalizeUnder(under string) string {

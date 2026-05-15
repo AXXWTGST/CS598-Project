@@ -3,11 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"cs598/tagindex/internal/events"
 	"cs598/tagindex/internal/filer"
@@ -44,6 +46,11 @@ func main() {
 	case "rebuild-index":
 		if err := runRebuildIndex(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "tagctl rebuild-index:", err)
+			os.Exit(1)
+		}
+	case "random-set":
+		if err := runRandomSet(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "tagctl random-set:", err)
 			os.Exit(1)
 		}
 	case "replay-events":
@@ -95,10 +102,14 @@ func runSet(args []string) error {
 	}
 
 	for _, p := range paths {
+		oldTags, err := client.GetTags(filer.EscapePath(p))
+		if err != nil {
+			return err
+		}
 		if err := client.SetTags(filer.EscapePath(p), tags, *version); err != nil {
 			return err
 		}
-		if err := store.Set(p, tags); err != nil {
+		if err := store.Update(p, oldTags, tags); err != nil {
 			return err
 		}
 		if err := events.AppendTagEvent(*eventLog, events.TagEvent{
@@ -169,7 +180,7 @@ func runUpdate(command string, args []string) error {
 			return err
 		}
 
-		if err := store.Set(p, nextTags); err != nil {
+		if err := store.Update(p, currentTags, nextTags); err != nil {
 			return err
 		}
 		op := "set"
@@ -189,6 +200,95 @@ func runUpdate(command string, args []string) error {
 	}
 
 	fmt.Printf("%s tags on %d file(s): %s\n", command, len(paths), strings.Join(changedTags, ","))
+	return nil
+}
+
+// randomly assign k tags from a tag pool file to every file under a directory. This is intended for fast test data setup.
+func runRandomSet(args []string) error {
+	fs := flag.NewFlagSet("random-set", flag.ExitOnError)
+	filerURL := fs.String("filer", "http://localhost:8888", "SeaweedFS filer URL")
+	indexRoot := fs.String("index", defaultIndexRoot(), "tag index root directory")
+	eventLog := fs.String("eventLog", defaultEventLog(), "tag event JSONL log path")
+	mountRoot := fs.String("mountRoot", defaultMountRoot(), "local SeaweedFS FUSE mount root to translate local paths")
+	version := fs.String("version", "1", "tag metadata version")
+	k := fs.Int("k", 4, "number of random tags to assign to each file")
+	seed := fs.Int64("seed", 0, "random seed; 0 uses current time")
+	batchLog := fs.Bool("batchLog", true, "append one random_set event instead of one set event per file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return fmt.Errorf("usage: tagctl random-set [flags] -k <count> <dir> <tag-file>")
+	}
+	if *k <= 0 {
+		return fmt.Errorf("-k must be positive")
+	}
+
+	dir := normalizeInputPath(fs.Arg(0), *mountRoot)
+	tagPool, err := readTagPool(fs.Arg(1))
+	if err != nil {
+		return err
+	}
+	if len(tagPool) < *k {
+		return fmt.Errorf("tag file has %d unique tag(s), need at least k=%d", len(tagPool), *k)
+	}
+
+	client := filer.New(*filerURL)
+	store := index.New(*indexRoot)
+	paths, err := client.ListFilesRecursive(dir)
+	if err != nil {
+		return err
+	}
+	if len(paths) == 0 {
+		return fmt.Errorf("no files found under %s", dir)
+	}
+
+	rngSeed := *seed
+	if rngSeed == 0 {
+		rngSeed = time.Now().UnixNano()
+	}
+	rng := rand.New(rand.NewSource(rngSeed))
+
+	for _, p := range paths {
+		tags := chooseRandomTags(rng, tagPool, *k)
+		oldTags, err := client.GetTags(filer.EscapePath(p))
+		if err != nil {
+			return err
+		}
+		if err := client.SetTags(filer.EscapePath(p), tags, *version); err != nil {
+			return err
+		}
+		if err := store.Update(p, oldTags, tags); err != nil {
+			return err
+		}
+		if !*batchLog {
+			if err := events.AppendTagEvent(*eventLog, events.TagEvent{
+				Ts:           nowUnixNano(),
+				Source:       "tagctl_random_set",
+				Op:           "set",
+				Path:         p,
+				Tags:         tags,
+				IndexUpdated: true,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+
+	if *batchLog {
+		if err := events.AppendTagEvent(*eventLog, events.TagEvent{
+			Ts:           nowUnixNano(),
+			Source:       "tagctl_random_set",
+			Op:           "random_set",
+			Path:         dir,
+			Tags:         tagPool,
+			IndexUpdated: true,
+		}); err != nil {
+			return err
+		}
+	}
+
+	fmt.Printf("random-set %d file(s), k=%d, pool=%d, seed=%d, batchLog=%v\n", len(paths), *k, len(tagPool), rngSeed, *batchLog)
 	return nil
 }
 
@@ -251,6 +351,9 @@ func runRebuildIndex(args []string) error {
 		if err := store.Set(p, tags); err != nil {
 			return err
 		}
+	}
+	if err := store.RebuildAllTagged(); err != nil {
+		return err
 	}
 
 	fmt.Printf("rebuilt index for %d file(s)\n", len(paths))
@@ -357,6 +460,45 @@ func mergeTags(currentTags, changedTags []string, deleteMode bool) []string {
 	return out
 }
 
+func readTagPool(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	tags := strings.FieldsFunc(string(data), func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
+	return normalizeTagList(tags), nil
+}
+
+func normalizeTagList(tags []string) []string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func chooseRandomTags(rng *rand.Rand, pool []string, k int) []string {
+	indexes := rng.Perm(len(pool))[:k]
+	tags := make([]string, 0, k)
+	for _, idx := range indexes {
+		tags = append(tags, pool[idx])
+	}
+	sort.Strings(tags)
+	return tags
+}
+
 // timestamp for events, but not guarantee to be unique
 func nowUnixNano() int64 {
 	return time.Now().UnixNano()
@@ -366,14 +508,14 @@ func defaultMountRoot() string {
 	if root := strings.TrimSpace(os.Getenv("TAGCTL_MOUNT_ROOT")); root != "" {
 		return root
 	}
-	return ""
+	return "/home/axx_0213/598Project/seaweed-mnt"
 }
 
 func defaultIndexRoot() string {
 	if root := strings.TrimSpace(os.Getenv("TAGCTL_INDEX_ROOT")); root != "" {
 		return root
 	}
-	return ".tagindex"
+	return "/mnt/f/seaweed/index"
 }
 
 func defaultEventLog() string {
@@ -437,6 +579,9 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  tagctl rebuild-index [-r] [flags] <path>")
 	fmt.Fprintln(os.Stderr, "      Rebuild index entries by reading tags from SeaweedFS metadata.")
 	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "  tagctl random-set [flags] -k <count> <dir> <tag-file>")
+	fmt.Fprintln(os.Stderr, "      Assign k random tags from a tag file to every file under a directory for test setup.")
+	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "  tagctl replay-events [flags]")
 	fmt.Fprintln(os.Stderr, "      Replay tag_events.log from the saved checkpoint into the index.")
 	fmt.Fprintln(os.Stderr)
@@ -444,17 +589,20 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  -filer <url>          SeaweedFS filer URL for set/add/delete/rebuild-index")
 	fmt.Fprintln(os.Stderr, "                        default: http://localhost:8888")
 	fmt.Fprintln(os.Stderr, "  -index <dir>          tag index root")
-	fmt.Fprintln(os.Stderr, "                        default: $TAGCTL_INDEX_ROOT or .tagindex")
+	fmt.Fprintln(os.Stderr, "                        default: $TAGCTL_INDEX_ROOT or /mnt/f/seaweed/index")
 	fmt.Fprintln(os.Stderr, "  -eventLog <file>      JSONL tag event log for set/add/delete/replay-events")
 	fmt.Fprintln(os.Stderr, "                        default: $TAGCTL_EVENT_LOG or <index>/events/tag_events.log")
 	fmt.Fprintln(os.Stderr, "  -checkpoint <file>    replay-events checkpoint file")
 	fmt.Fprintln(os.Stderr, "                        default: $TAGCTL_CHECKPOINT or <index>/events/tag_events.offset")
 	fmt.Fprintln(os.Stderr, "  -mountRoot <dir>      local FUSE mount root used to translate local paths")
-	fmt.Fprintln(os.Stderr, "                        default: $TAGCTL_MOUNT_ROOT or empty")
+	fmt.Fprintln(os.Stderr, "                        default: /home/axx_0213/598Project/seaweed-mnt")
 	fmt.Fprintln(os.Stderr, "  -version <value>      tag metadata version for set/add/delete")
 	fmt.Fprintln(os.Stderr, "                        default: 1")
 	fmt.Fprintln(os.Stderr, "  -r                    recursively apply set/add/delete/rebuild-index to files under path")
 	fmt.Fprintln(os.Stderr, "  -under <path>         restrict query results to a directory subtree")
+	fmt.Fprintln(os.Stderr, "  -k <count>            number of random tags per file for random-set")
+	fmt.Fprintln(os.Stderr, "  -seed <int>           deterministic random seed for random-set; 0 uses current time")
+	fmt.Fprintln(os.Stderr, "  -batchLog <bool>      random-set writes one random_set event when true")
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Examples:")
 	fmt.Fprintln(os.Stderr, "  tagctl set /dataset/hello.txt cs598,email")
@@ -464,5 +612,6 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  tagctl query cs598 AND NOT archived")
 	fmt.Fprintln(os.Stderr, "  tagctl query -under /dataset/enron email OR important")
 	fmt.Fprintln(os.Stderr, "  tagctl rebuild-index -r /dataset")
+	fmt.Fprintln(os.Stderr, "  tagctl random-set -k 4 /_sent_mail ./tags.txt")
 	fmt.Fprintln(os.Stderr, "  tagctl replay-events")
 }

@@ -62,6 +62,7 @@ func ReplayTagEvents(logPath, checkpointPath, indexRoot string) (*ReplayResult, 
 		return nil, err
 	}
 	result := &ReplayResult{StartOffset: startOffset, EndOffset: startOffset}
+	store := index.New(indexRoot)
 
 	unlock, err := lockEventLog(logPath)
 	if err != nil {
@@ -71,6 +72,9 @@ func ReplayTagEvents(logPath, checkpointPath, indexRoot string) (*ReplayResult, 
 
 	data, err := os.ReadFile(logPath)
 	if errors.Is(err, os.ErrNotExist) {
+		if err := store.RebuildAllTagged(); err != nil {
+			return nil, err
+		}
 		return result, nil
 	}
 	if err != nil {
@@ -81,7 +85,6 @@ func ReplayTagEvents(logPath, checkpointPath, indexRoot string) (*ReplayResult, 
 		result.StartOffset = 0
 	}
 
-	store := index.New(indexRoot)
 	reader := bufio.NewReader(bytes.NewReader(data[startOffset:]))
 	offset := startOffset
 	needsRewrite := false
@@ -138,6 +141,9 @@ func ReplayTagEvents(logPath, checkpointPath, indexRoot string) (*ReplayResult, 
 		if err := markEventsUpdated(logPath, data, result.EndOffset); err != nil {
 			return nil, err
 		}
+	}
+	if err := store.RebuildAllTagged(); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

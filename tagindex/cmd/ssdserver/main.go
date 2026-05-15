@@ -23,6 +23,7 @@ type server struct {
 	cache      *ssd.Cache
 	scoreOpts  hotness.ScoreOptions
 	defaultTop int
+	evictStale bool
 }
 
 func main() {
@@ -33,6 +34,8 @@ func main() {
 	hotnessRoot := flag.String("hotness", "", "hotness store directory; default is <ssd>/hotness")
 	cacheRoot := flag.String("cache", "", "hot file cache directory; default is <ssd>/cache")
 	topN := flag.Int("top", 20, "default number of hot files to return or copy")
+	cacheInterval := flag.Duration("cacheInterval", 0, "periodically copy top hot files into SSD cache; 0 disables periodic caching")
+	evictStale := flag.Bool("evictStale", true, "mark and delete cached files that are no longer in the current top hot set")
 	readWeight := flag.Float64("readWeight", 1, "hotness score weight per read")
 	writeWeight := flag.Float64("writeWeight", 2, "hotness score weight per write")
 	openWeight := flag.Float64("openWeight", 0.25, "hotness score weight per open")
@@ -61,6 +64,7 @@ func main() {
 		cache:      ssd.NewCache(roots.cache, filer.New(*filerURL)),
 		scoreOpts:  scoreOpts,
 		defaultTop: *topN,
+		evictStale: *evictStale,
 	}
 
 	mux := http.NewServeMux()
@@ -69,9 +73,14 @@ func main() {
 	mux.HandleFunc("/api/cache", s.handleCache)
 	mux.HandleFunc("/api/record", s.handleRecord)
 
+	if *cacheInterval > 0 {
+		go s.runPeriodicCache(*cacheInterval)
+	}
+
 	log.Printf("ssdserver listening on http://localhost%s", *addr)
 	log.Printf("index root: %s", s.indexRoot)
 	log.Printf("cache root: %s", s.cacheRoot)
+	log.Printf("cache metadata: %s", s.cache.MetadataPath())
 	log.Fatal(http.ListenAndServe(*addr, mux))
 }
 
@@ -112,6 +121,8 @@ func (s *server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"indexRoot":   s.indexRoot,
 		"cacheRoot":   s.cacheRoot,
+		"cacheMeta":   s.cache.MetadataPath(),
+		"evictStale":  s.evictStale,
 		"hotnessRoot": s.hotStore.Root,
 		"hotnessMeta": meta,
 	})
@@ -137,8 +148,8 @@ func (s *server) handleCache(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	results := s.cache.CopyHotFiles(ranked)
-	writeJSON(w, map[string]any{"copied": results})
+	copied, evicted := s.cache.CopyHotFilesWithEviction(ranked, s.evictStale)
+	writeJSON(w, map[string]any{"copied": copied, "evicted": evicted})
 }
 
 func (s *server) handleRecord(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +176,36 @@ func (s *server) hotFiles(limit int) ([]hotness.RankedFile, error) {
 		return nil, err
 	}
 	return hotness.Rank(counters, s.scoreOpts, limit), nil
+}
+
+func (s *server) runPeriodicCache(interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		s.cacheOnce()
+		<-ticker.C
+	}
+}
+
+func (s *server) cacheOnce() {
+	ranked, err := s.hotFiles(s.defaultTop)
+	if err != nil {
+		log.Printf("periodic cache rank hot files: %v", err)
+		return
+	}
+	results, evicted := s.cache.CopyHotFilesWithEviction(ranked, s.evictStale)
+	ok, failed := 0, 0
+	for _, result := range results {
+		if result.Error != "" {
+			failed++
+		} else {
+			ok++
+		}
+	}
+	log.Printf("periodic cache top=%d copied=%d failed=%d evicted=%d", s.defaultTop, ok, failed, len(evicted))
 }
 
 func topParam(r *http.Request, fallback int) int {

@@ -344,6 +344,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		HotnessDir:           *option.hotnessDir,
 		HotnessCapacity:      *option.hotnessCapacity,
 		HotnessSlotSize:      *option.hotnessSlotSize,
+		SSDCacheRoot:         *option.ssdCacheRoot,
+		SSDCacheMeta:         *option.ssdCacheMeta,
 		IsMacOs:              runtime.GOOS == "darwin",
 		MetadataFlushSeconds: *option.metadataFlushSeconds,
 		// RDMA acceleration options

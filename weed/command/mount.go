@@ -40,6 +40,8 @@ type MountOptions struct {
 	hotnessDir         *string
 	hotnessCapacity    *int64
 	hotnessSlotSize    *int64
+	ssdCacheRoot       *string
+	ssdCacheMeta       *string
 	extraOptions       []string
 	fuseCommandPid     int
 
@@ -113,6 +115,8 @@ func init() {
 	mountOptions.hotnessDir = cmdMount.Flag.String("hotnessDir", "", "record FUSE open/read/write raw hotness counters under this directory")
 	mountOptions.hotnessCapacity = cmdMount.Flag.Int64("hotnessCapacity", 100000, "number of recent FUSE hotness events to keep in the circular buffer")
 	mountOptions.hotnessSlotSize = cmdMount.Flag.Int64("hotnessSlotSize", 512, "bytes per fixed-size hotness event slot")
+	mountOptions.ssdCacheRoot = cmdMount.Flag.String("ssdCacheRoot", "", "read valid hot-file cache copies from this local SSD cache root")
+	mountOptions.ssdCacheMeta = cmdMount.Flag.String("ssdCacheMeta", "", "SSD cache metadata JSON file produced by ssdserver")
 	mountOptions.hasAutofs = cmdMount.Flag.Bool("autofs", false, "ignore autofs mounted on the same mountpoint (useful when systemd.automount and autofs is used)")
 	mountOptions.fuseCommandPid = 0
 

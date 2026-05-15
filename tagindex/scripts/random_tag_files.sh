@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="${1:-${TAGCTL_MOUNT_ROOT:-}}"
-
-if [ -z "$ROOT" ]; then
-  echo "usage: $0 <dataset_dir>"
-  echo "or set TAGCTL_MOUNT_ROOT=/path/to/seaweed-mnt"
-  exit 1
-fi
+ROOT="${1:-/home/axx_0213/598Project/seaweed-mnt/_sent_mail}"
 TAGCTL_BIN="${TAGCTL_BIN:-/home/axx_0213/598Project/tagindex/bin/tagctl}"
 TAG_OP="${TAG_OP:-set}"
 TAGS_PER_FILE="${TAGS_PER_FILE:-4}"

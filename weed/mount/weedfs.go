@@ -55,6 +55,8 @@ type Option struct {
 	HotnessDir         string
 	HotnessCapacity    int64
 	HotnessSlotSize    int64
+	SSDCacheRoot       string
+	SSDCacheMeta       string
 	IsMacOs            bool
 
 	MountUid         uint32

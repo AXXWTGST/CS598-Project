@@ -1,0 +1,5 @@
+bin/
+eval_data/
+eval_results/
+.tagindex/
+*.tmp

@@ -306,7 +306,7 @@ func defaultIndexRoot() string {
 	if root := strings.TrimSpace(os.Getenv("TAGCTL_INDEX_ROOT")); root != "" {
 		return root
 	}
-	return "/mnt/f/seaweed/index"
+	return ".tagindex"
 }
 
 func defaultCheckpoint() string {

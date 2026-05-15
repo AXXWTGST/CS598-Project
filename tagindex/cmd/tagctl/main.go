@@ -362,19 +362,18 @@ func nowUnixNano() int64 {
 	return time.Now().UnixNano()
 }
 
-//
 func defaultMountRoot() string {
 	if root := strings.TrimSpace(os.Getenv("TAGCTL_MOUNT_ROOT")); root != "" {
 		return root
 	}
-	return "/home/axx_0213/598Project/seaweed-mnt"
+	return ""
 }
 
 func defaultIndexRoot() string {
 	if root := strings.TrimSpace(os.Getenv("TAGCTL_INDEX_ROOT")); root != "" {
 		return root
 	}
-	return "/mnt/f/seaweed/index"
+	return ".tagindex"
 }
 
 func defaultEventLog() string {
@@ -445,13 +444,13 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  -filer <url>          SeaweedFS filer URL for set/add/delete/rebuild-index")
 	fmt.Fprintln(os.Stderr, "                        default: http://localhost:8888")
 	fmt.Fprintln(os.Stderr, "  -index <dir>          tag index root")
-	fmt.Fprintln(os.Stderr, "                        default: $TAGCTL_INDEX_ROOT or /mnt/f/seaweed/index")
+	fmt.Fprintln(os.Stderr, "                        default: $TAGCTL_INDEX_ROOT or .tagindex")
 	fmt.Fprintln(os.Stderr, "  -eventLog <file>      JSONL tag event log for set/add/delete/replay-events")
 	fmt.Fprintln(os.Stderr, "                        default: $TAGCTL_EVENT_LOG or <index>/events/tag_events.log")
 	fmt.Fprintln(os.Stderr, "  -checkpoint <file>    replay-events checkpoint file")
 	fmt.Fprintln(os.Stderr, "                        default: $TAGCTL_CHECKPOINT or <index>/events/tag_events.offset")
 	fmt.Fprintln(os.Stderr, "  -mountRoot <dir>      local FUSE mount root used to translate local paths")
-	fmt.Fprintln(os.Stderr, "                        default: /home/axx_0213/598Project/seaweed-mnt")
+	fmt.Fprintln(os.Stderr, "                        default: $TAGCTL_MOUNT_ROOT or empty")
 	fmt.Fprintln(os.Stderr, "  -version <value>      tag metadata version for set/add/delete")
 	fmt.Fprintln(os.Stderr, "                        default: 1")
 	fmt.Fprintln(os.Stderr, "  -r                    recursively apply set/add/delete/rebuild-index to files under path")

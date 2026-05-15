@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	DefaultRoot     = "/mnt/f/seaweed/index/hotness"
+	DefaultRoot     = ".tagindex/hotness"
 	DefaultCapacity = 100000
 	DefaultSlotSize = 512
 

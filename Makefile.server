@@ -1,0 +1,26 @@
+SHELL := /usr/bin/env bash
+cat > Makefile.cloudlab <<'EOF'
+SHELL := /usr/bin/env bash
+
+EXP_IP ?= $(shell hostname -I | tr ' ' '\n' | grep '^10\.' | head -n 1)
+WEED ?= /tmp/weed
+DATA ?= /mnt/hdd/seaweed
+
+.PHONY: build init stop
+
+build:
+	go build -o $(WEED) ./weed
+
+init: build
+	mkdir -p $(DATA)/master $(DATA)/volume $(DATA)/logs $(MOUNT)
+	nohup $(WEED) master -ip=$(EXP_IP) -port=9333 -mdir=$(DATA)/master > $(DATA)/logs/master.log 2>&1 &
+	sleep 2
+	nohup $(WEED) volume -ip=$(EXP_IP) -port=8080 -dir=$(DATA)/volume -max=10 -mserver=$(EXP_IP):9333 > $(DATA)/logs/volume.log 2>&1 &
+	sleep 2
+	nohup $(WEED) filer -ip=$(EXP_IP) -port=8888 -master=$(EXP_IP):9333 > $(DATA)/logs/filer.log 2>&1 &
+
+stop:
+	pkill -f "$(WEED) filer" || true
+	pkill -f "$(WEED) volume" || true
+	pkill -f "$(WEED) master" || true
+EOF

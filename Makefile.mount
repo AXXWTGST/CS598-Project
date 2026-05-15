@@ -1,0 +1,20 @@
+.RECIPEPREFIX := >
+SHELL := /usr/bin/env bash
+
+SERVER_HOST ?= node1
+
+WEED ?= /tmp/weed
+MOUNT ?= $(HOME)/seaweed-mnt
+LOG_DIR ?= /mnt/hdd/seaweed/logs
+
+.PHONY: build init stop
+
+build:
+> go build -o $(WEED) ./weed
+
+init: build
+> mkdir -p $(MOUNT) $(LOG_DIR)
+> nohup $(WEED) mount -filer=$(SERVER_HOST):8888 -dir=$(MOUNT) > $(LOG_DIR)/mount.log 2>&1 &
+
+stop:
+> pkill -f "$(WEED) mount" || true

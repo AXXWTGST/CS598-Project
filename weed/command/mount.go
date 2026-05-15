@@ -35,6 +35,13 @@ type MountOptions struct {
 	debugPort          *int
 	localSocket        *string
 	disableXAttr       *bool
+	tagEventLog        *string
+	ruleJson           *string
+	hotnessDir         *string
+	hotnessCapacity    *int64
+	hotnessSlotSize    *int64
+	ssdCacheRoot       *string
+	ssdCacheMeta       *string
 	extraOptions       []string
 	fuseCommandPid     int
 
@@ -103,6 +110,13 @@ func init() {
 	mountOptions.debugPort = cmdMount.Flag.Int("debug.port", 6061, "http port for debugging")
 	mountOptions.localSocket = cmdMount.Flag.String("localSocket", "", "default to /tmp/seaweedfs-mount-<mount_dir_hash>.sock")
 	mountOptions.disableXAttr = cmdMount.Flag.Bool("disableXAttr", false, "disable xattr")
+	mountOptions.tagEventLog = cmdMount.Flag.String("tagEventLog", "", "append JSONL tag update events from FUSE xattr changes to this file")
+	mountOptions.ruleJson = cmdMount.Flag.String("ruleJson", "", "JSON file mapping file extensions to tags to apply on FUSE file create")
+	mountOptions.hotnessDir = cmdMount.Flag.String("hotnessDir", "", "record FUSE open/read/write raw hotness counters under this directory")
+	mountOptions.hotnessCapacity = cmdMount.Flag.Int64("hotnessCapacity", 100000, "number of recent FUSE hotness events to keep in the circular buffer")
+	mountOptions.hotnessSlotSize = cmdMount.Flag.Int64("hotnessSlotSize", 512, "bytes per fixed-size hotness event slot")
+	mountOptions.ssdCacheRoot = cmdMount.Flag.String("ssdCacheRoot", "", "read valid hot-file cache copies from this local SSD cache root")
+	mountOptions.ssdCacheMeta = cmdMount.Flag.String("ssdCacheMeta", "", "SSD cache metadata JSON file produced by ssdserver")
 	mountOptions.hasAutofs = cmdMount.Flag.Bool("autofs", false, "ignore autofs mounted on the same mountpoint (useful when systemd.automount and autofs is used)")
 	mountOptions.fuseCommandPid = 0
 

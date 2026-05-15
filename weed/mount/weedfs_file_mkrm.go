@@ -67,6 +67,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 			Inode:    inode,
 		},
 	}
+	ruleTags := wfs.applyCreateTagRules(entryFullPath, newEntry)
 
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -104,6 +105,9 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 
 	if err != nil {
 		return fuse.EIO
+	}
+	if len(ruleTags) > 0 {
+		wfs.appendTagEventIfNeeded(entryFullPath, TAG_XATTR_NAME, []byte(joinTags(ruleTags)), false)
 	}
 
 	// this is to increase nlookup counter

@@ -50,6 +50,13 @@ type Option struct {
 	Umask              os.FileMode
 	Quota              int64
 	DisableXAttr       bool
+	TagEventLog        string
+	RuleJson           string
+	HotnessDir         string
+	HotnessCapacity    int64
+	HotnessSlotSize    int64
+	SSDCacheRoot       string
+	SSDCacheMeta       string
 	IsMacOs            bool
 
 	MountUid         uint32
@@ -110,6 +117,9 @@ type WFS struct {
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
+	ruleTagsOnce         sync.Once
+	ruleTags             map[string][]string
+	ruleTagsErr          error
 }
 
 const (

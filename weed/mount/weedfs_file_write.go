@@ -80,6 +80,8 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 	}
 
 	written = uint32(len(data))
+	wfs.recordHotnessWrite(fh.FullPath(), int64(written))
+	wfs.invalidateSSDCache(fh.FullPath())
 
 	if offset == 0 {
 		// detect mime type

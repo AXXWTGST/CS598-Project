@@ -60,11 +60,19 @@ func (wfs *WFS) Read(cancel <-chan struct{}, in *fuse.ReadIn, buff []byte) (fuse
 	}()
 
 	offset := int64(in.Offset)
+	if totalRead, ok, err := wfs.readFromSSDCache(fh.FullPath(), offset, buff); err != nil {
+		glog.Warningf("ssd cache read %s: %v", fh.FullPath(), err)
+	} else if ok {
+		wfs.recordHotnessRead(fh.FullPath(), totalRead)
+		return fuse.ReadResultData(buff[:totalRead]), fuse.OK
+	}
+
 	totalRead, err := readDataByFileHandleWithContext(ctx, buff, fh, offset)
 	if err != nil {
 		glog.Warningf("file handle read %s %d: %v", fh.FullPath(), totalRead, err)
 		return nil, fuse.EIO
 	}
+	wfs.recordHotnessRead(fh.FullPath(), totalRead)
 
 	if IsDebugFileReadWrite {
 		// print(".")

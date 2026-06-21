@@ -84,7 +84,7 @@ jobs:
     steps:
       - name: Checkout
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         
       - name: Free Disk Space
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
@@ -266,7 +266,7 @@ jobs:
       contents: write
       pages: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Publish Helm charts
         uses: stefanprodan/helm-gh-pages@v1.7.0
         with:          
